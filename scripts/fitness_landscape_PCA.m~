@@ -1,0 +1,237 @@
+function fitness_landscape_PCA()
+
+load data/processed/genes.mat
+load data/processed/promoters.mat
+load data/processed/exclusion_gene_promoters.mat
+
+data_name = 'FNM_smooth_fun_grid05_025';
+load data/processed/FNM_smooth_fun_grid05_025.mat
+show_genes = genes.ID(genes.GLU_wtExpr > 3 & genes.GLU_wtExpr < 5);
+
+%normalize fitness by fitness at wild-type mean and low noise
+F2d_norm = landscape_windowed.F2d(:,:,:)-...
+    repmat(landscape_windowed.F2d(Neval(1),(size(landscape_windowed.F2d,2)-1)/2,:),size(landscape_windowed.F2d,1),size(landscape_windowed.F2d,2));
+
+%take only data within noise=[-3,-1]
+rel_fit = (squeeze(reshape(F2d_norm(MODE.yv>=-3 & MODE.yv<=-1,:,:),sum(MODE.yv>=-3 & MODE.yv<=-1)*size(landscape_windowed.F2d,2),1,size(landscape_windowed.F2d,3))))';
+
+F_mean = reshape(mean(rel_fit),81,61);
+
+show_genes1 = show_genes;
+% [COEFF0, SCORE0, LATENT] = pca(rel_fit,'Centered',false);
+[COEFF0, SCORE0, LATENT] = pca(rel_fit,'Centered',true);
+
+COEFF = -COEFF0;
+SCORE = -SCORE0;
+
+%estimate PC coefficients for mean landscape
+fun2 = @(y) sqrt(sum((COEFF(:,[1 2])*y - mean(rel_fit)').^2));
+y0 = zeros(2,1);
+PCzero = fminsearch(fun2,y0);
+
+% %% estimate PC coefficients for random landscapes
+% 
+% 
+% % load(['data/processed/' data_name '_randLandscapes1000.mat'])
+% F_rand = []
+% F_real = []
+% for j=1:size(randomized_landscapes,2)
+%     clear F_rand2
+%     for i=1:size(randomized_landscapes,1)
+% %         F_rand(:,(j-1)*size(randomized_landscapes,1)+i) = reshape(randomized_landscapes{i,j} - randomized_landscapes{i,j}(1,31),81*61,1);
+%         F_rand2(:,i) = reshape(randomized_landscapes{i,j} - randomized_landscapes{i,j}(1,31),81*61,1);
+%     end
+%     F_gene = [F_rand2'; rel_fit(j,:)];
+%     F_gene_z = zscore(F_gene);
+%     
+%     F_rand = [F_rand; F_gene_z(1:1000,:)];
+%     F_real = [F_real; F_gene_z(1001,:)];
+% end
+% 
+% F_all = [rel_fit; F_rand'];
+% F_all_mean = reshape(mean(F_all),81,61);
+% [COEFF0, SCORE0, LATENT] = pca(F_all,'Centered',true);
+% 
+% % clear SCORE0_norm
+% for j=1:4%size(SCORE0,2)
+%     score_rand = reshape(SCORE0(34:end,j),size(randomized_landscapes,1),33);
+%     for i=1:33
+%         SCORE0_norm2(i,j) = sum(score_rand(:,i) > SCORE0(i,j))/size(randomized_landscapes,1);
+%     end
+% end
+% % y0 = zeros(32,1);
+% % clear PCrand
+% % for j=1%:size(randomized_landscapes,2)
+% %     j
+% %     for i=1:20%size(randomized_landscapes,1)
+% %         i
+% %         F = randomized_landscapes{i,j} - randomized_landscapes{i,j}(1,31);
+% %         fun2_rand = @(y) sqrt(sum((COEFF(:,1:32)*y - F(:)).^2));
+% %         PCrand32(:,i,j) = fminsearch(fun2_rand,y0);
+% %     end
+% % end
+% % PC loadings are highly correlated on random landscapes
+
+%%
+
+% principal_landscapes = reshape(COEFF,81,61,33);
+principal_landscapes = reshape(COEFF,81,61,32);
+principal_landscapes_genescores = SCORE(:,1:2) + repmat(PCzero',size(SCORE,1),1); %omit scores for last PC, to exclude risk of confusing dimensions
+principal_landscapes_varexp = LATENT;
+
+%calculate fdr values
+clear p
+for j=1:2
+    for i=1:33
+        p(i,j) = sum(PCrand(j,:,i)' > principal_landscapes_genescores(i,j))/1000;
+    end
+    [exp,sort_i] = sort(p(:,j));
+    exp(exp==0) = 1/1000;
+    [exp1,ia,ic] = unique(exp,'last');
+    obs = (1:numel(exp))/numel(exp);
+    obs1 = obs(ia);
+    fdr = exp1./obs1';
+    FDR(sort_i,j) = fdr(ic);
+end
+
+
+
+F_mean_reconstruct = PCzero(1)*principal_landscapes(:,:,1) + PCzero(2)*principal_landscapes(:,:,2);
+
+save(['data/processed/' data_name '_landscape_PCA.mat'],'principal_landscapes','principal_landscapes_genescores','principal_landscapes_varexp','PCzero','PCrand')
+
+f=figure;
+subplot(3,2,1)
+plot(principal_landscapes_genescores(:,1),principal_landscapes_genescores(:,2),'.')
+for i=1:numel(show_genes1)
+    text(principal_landscapes_genescores(i,1),principal_landscapes_genescores(i,2),show_genes1(i))
+end
+hline(0)
+refline(1,0)
+refline(-1,0)
+box off
+axis([0 ...
+    max(principal_landscapes_genescores(:,1))+0.1*range(principal_landscapes_genescores(:,1)) ...
+    min(principal_landscapes_genescores(:,2))-0.05*range(principal_landscapes_genescores(:,2)) ...
+    max(principal_landscapes_genescores(:,2))+0.1*range(principal_landscapes_genescores(:,2))])
+xlabel(['PC 1 loading (' num2str(round(LATENT(1)/sum(LATENT)*100,1)) '% variance ex.)'])
+ylabel(['PC 2 loading (' num2str(round(LATENT(2)/sum(LATENT)*100,1)) '% variance ex.)'])
+
+
+s=subplot(3,3,3);
+bar(LATENT/sum(LATENT))
+set(s,'XTick',[1 5:5:30],'YTick',[0 0.5 1])
+axis([0 33 0 1])
+xlabel('principal component')
+ylabel('% variance explained')
+
+
+s=subplot(3,3,4);
+p=pcolor(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),principal_landscapes(:,:,1));
+set(p, 'EdgeColor', 'none');
+hold on
+V = -.055:.005:.025; 
+[~,c]=contour(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),principal_landscapes(:,:,1),V);
+set(c,'LineColor','black');
+
+% colorbar
+caxis(V([1 end]))
+set(s,'XTick',[-1 0 1],'YTick',[-3 -2 -1])
+colormap('jet')
+title('PC 1')
+xlabel('mean expression')
+ylabel('noise')
+
+%%%%plot to create colorbar
+s=subplot(3,3,6);
+contourf(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),principal_landscapes(:,:,1),V);
+caxis(V([1 end]))
+colorbar
+title('ignore this')
+%%%%
+
+
+s=subplot(3,3,5);
+p=pcolor(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),principal_landscapes(:,:,2));
+set(p, 'EdgeColor', 'none');
+hold on
+[~,c]=contour(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),principal_landscapes(:,:,2),V);
+set(c,'LineColor','black');
+caxis(V([1 end]))
+set(s,'XTick',[-1 0 1],'YTick',[-3 -2 -1])
+title('PC 2')
+xlabel('mean expression')
+ylabel('noise')
+
+
+s=subplot(3,3,7);
+p=pcolor(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),principal_landscapes(:,:,1) + principal_landscapes(:,:,2));
+set(p, 'EdgeColor', 'none');
+hold on
+[~,c]=contour(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),principal_landscapes(:,:,1) + principal_landscapes(:,:,2),V);
+set(c,'LineColor','black');
+caxis(V([1 end]))
+set(s,'XTick',[-1 0 1],'YTick',[-3 -2 -1])
+title('PC 1 + PC 2')
+xlabel('mean expression')
+ylabel('noise')
+
+s=subplot(3,3,8);
+p=pcolor(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),principal_landscapes(:,:,1) - principal_landscapes(:,:,2));
+set(p, 'EdgeColor', 'none');
+hold on
+[~,c]=contour(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),principal_landscapes(:,:,1) - principal_landscapes(:,:,2),V);
+set(c,'LineColor','black');
+caxis(V([1 end]))
+set(s,'XTick',[-1 0 1],'YTick',[-3 -2 -1])
+title('PC 1 - PC 2')
+xlabel('mean expression')
+ylabel('noise')
+
+s=subplot(3,3,9);
+p=pcolor(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),F_mean-F_mean_reconstruct);
+set(p, 'EdgeColor', 'none');
+hold on
+[~,c]=contour(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),F_mean-F_mean_reconstruct,V);
+set(c,'LineColor','black');
+caxis(V([1 end]))
+set(s,'XTick',[-1 0 1],'YTick',[-3 -2 -1])
+title(['diff mean vs. mean-reconst, R^2 = ' num2str(corr(F_mean_reconstruct(:),F_mean(:))^2,2)])
+xlabel('mean expression')
+ylabel('noise')
+
+print(f,'-depsc2','-painters','-loose',['results/' data_name '_PCA.eps'])
+
+%% %%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%plot raw data, landscapes and PC reconstruction for all genes
+
+%compare reconstruction from pc1 & pc2 with fitness landscape
+% s=subplot(2,3,2);
+% gene = 'ABF1';
+% gene_score = SCORE(strcmp(show_genes1,gene),:);
+% % gene_score = [1 1];
+% V = linspace(-0.11,0.05,20);
+% cont = contourf(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),...
+%     gene_score(1)*reshape(COEFF(:,1),81,61)+gene_score(2)*reshape(COEFF(:,2),81,61),...
+%     V);
+% colorbar
+% caxis(V([1 end]))
+% set(s,'XTick',[-1 0 1],'YTick',[-3 -2 -1])
+% title(['reconstruction from PC 1&2: ' gene])
+% xlabel('mean expression')
+% ylabel('noise')
+% 
+% s=subplot(2,3,3);
+% V = linspace(-0.11,0.05,20);
+% cont = contourf(-1.5:0.05:1.5,MODE.yv(MODE.yv>=-3 & MODE.yv<=-1),...
+%     reshape(rel_fit(strcmp(show_genes,gene),:),81,61),...
+%     V);
+% colorbar
+% caxis(V([1 end]))
+% set(s,'XTick',[-1 0 1],'YTick',[-3 -2 -1])
+% title(['original landscape: ' gene])
+% xlabel('mean expression')
+% ylabel('noise')
+
+

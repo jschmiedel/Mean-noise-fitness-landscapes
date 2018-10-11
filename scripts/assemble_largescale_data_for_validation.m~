@@ -1,0 +1,60 @@
+%% assemble table with experimental data on expression-senstivity and noise of genes
+
+load data/genes.mat
+
+%ORF - gene name conversion
+ORF2gene = readtable('data/yeast_gene_ORF2.csv','TreatAsEmpty',{'NA','',' '},'ReadVariableNames',false);
+ORF2gene = ORF2gene(~strcmp('',ORF2gene.Var2),1:2);
+ORF2gene.Properties.VariableNames = {'ORF','gene'};
+
+for i=1:numel(genes.ID)
+    match = find(strcmp(genes.ID{i},ORF2gene.gene));
+    if ~isempty(match)
+        conv_Keren_SGD_idx(i,1) = match;
+    else
+        if strcmp(genes.ID{i},'TIM23')
+            conv_Keren_SGD_idx(i,1) = find(strcmp('MAS6',ORF2gene.gene));
+        elseif strcmp(genes.ID{i},'TIM10')
+            conv_Keren_SGD_idx(i,1) = find(strcmp('MRS11',ORF2gene.gene));
+        elseif strcmp(genes.ID{i},'USV1')
+            conv_Keren_SGD_idx(i,1) = find(strcmp('YPL230W',ORF2gene.gene));
+        end  
+    end
+end
+endogenous_validation = ORF2gene(conv_Keren_SGD_idx,:);
+
+%essential genes
+output = readtable('data/essential_ORFs.txt','Delimiter','\t','TreatAsEmpty',{'NA','',' '});
+essential_ORFs = strtrim(output.ORF_name(2:end));
+[a,b] = ismember(essential_ORFs,endogenous_validation.ORF);
+endogenous_validation = [endogenous_validation array2table(false(size(endogenous_validation,1),1),'VariableNames',{'essential'})];
+endogenous_validation.essential(b(a)) = true;
+
+%over-expression sensitive genes
+endogenous_validation = [endogenous_validation array2table(false(size(endogenous_validation,1),1),'VariableNames',{'OE_sensitive'})];
+load('data/Sopko2006_OEsensitive.mat')
+[a,b] = ismember(Sopko2006.ORF,endogenous_validation.ORF);
+endogenous_validation.OE_sensitive(b(a)) = true;
+
+load('data/Makanae2013_OEsens.mat')
+[a,b] = ismember(Makanae2013.ORF,endogenous_validation.ORF);
+endogenous_validation.OE_sensitive(b(a)) = true;
+
+%noise data from Newman2006
+output = readtable('data/Newman2006_TableS1_nature04785-s03.txt','Delimiter','\t','Headerlines',2,'TreatAsEmpty',{'NA','',' '});
+endogenous_validation = [endogenous_validation array2table(NaN(size(endogenous_validation,1),1),'VariableNames',{'Noise_Newman_DM_SD'})];
+endogenous_validation = [endogenous_validation array2table(NaN(size(endogenous_validation,1),1),'VariableNames',{'Noise_Newman_DM_YPD'})];
+[a,b] = ismember(output.ORF,endogenous_validation.ORF);
+endogenous_validation.Noise_Newman_DM_SD(b(a)) = output.DMSD(a);
+endogenous_validation.Noise_Newman_DM_YPD(b(a)) = output.DMYEPD(a);
+
+%noise data from Stewart-Ornstein 2012
+endogenous_validation = [endogenous_validation array2table(NaN(size(endogenous_validation,1),1),'VariableNames',{'Noise_StewartO_DevTot'})];
+
+endogenous_validation.Noise_Newman_DM_SD = yeast.Newman2006.DM_SD(conv_Keren_SGD_idx);
+endogenous_validation.Noise_Newman_DM_YPD = yeast.Newman2006.DM_YPD(conv_Keren_SGD_idx);
+endogenous_validation.Noise_StewartO_DevTot = log2(yeast.StewartOrnstein2012.DevTot(conv_Keren_SGD_idx));
+
+endogenous_validation.Properties.RowNames = genes.ID;
+
+save('data/processed/endogenous_validation_data.mat','endogenous_validation');
